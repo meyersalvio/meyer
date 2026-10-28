@@ -116,6 +116,28 @@ def texto_de(html):
     return re.sub(r"\s+", " ", s.get_text(" ")), s
 
 
+GENERICAS = {"inicio", "home", "bienvenido", "bienvenidos", "welcome", "pagina principal", "sitio oficial",
+             "oficial", "index", "portada", "tienda online", "web oficial"}
+
+
+def limpiar_nombre(site, titulo, url):
+    """Detecta el nombre de la empresa a partir del sitio (og:site_name, título o dominio)."""
+    host = urlparse(url).netloc.lower().replace("www.", "")
+    base = host.split(".")[0]
+    def limpio(t):
+        return t.strip(" -–—|·•:")
+    if site and quitar_tildes(limpio(site)) not in GENERICAS:
+        return limpio(site)[:60]
+    partes = [limpio(x) for x in re.split(r"\s+[|\-–—·•:]\s+|\s*\|\s*", titulo or "")]
+    partes = [x for x in partes if x and quitar_tildes(x) not in GENERICAS]
+    for x in partes:
+        if base and base in quitar_tildes(x).replace(" ", ""):
+            return x[:60]
+    if partes:
+        return (min(partes, key=len) if len(partes) > 1 else partes[0])[:60]
+    return base.replace("-", " ").title()
+
+
 def sacar_info(sopa, url):
     def meta(*nombres):
         for n in nombres:
@@ -123,7 +145,9 @@ def sacar_info(sopa, url):
             if t and t.get("content"):
                 return t["content"].strip()
         return ""
-    titulo = meta("og:site_name", "og:title") or (sopa.title.string.strip() if sopa.title and sopa.title.string else "")
+    site = meta("og:site_name", "application-name")
+    titulo = meta("og:title") or (sopa.title.string.strip() if sopa.title and sopa.title.string else "")
+    nombre = limpiar_nombre(site, titulo, url)
     desc = meta("og:description", "description", "twitter:description")
     c = []
     for n in ("og:image", "twitter:image"):
@@ -139,7 +163,7 @@ def sacar_info(sopa, url):
             c.append(urljoin(url, im["src"]))
             break
     c.append(urljoin(url, "/favicon.ico"))
-    return titulo, desc[:300], c
+    return titulo, desc[:300], c, nombre
 
 
 def bajar_imagen(cands):
@@ -162,8 +186,8 @@ def bajar_imagen(cands):
 def leer_sitio(url, max_paginas=5):
     html = descargar(url)
     texto, sopa = texto_de(html)
-    titulo, desc, cands = sacar_info(sopa, url)
-    info = {"titulo": titulo, "desc": desc, "url": url}
+    titulo, desc, cands, nombre = sacar_info(sopa, url)
+    info = {"titulo": titulo, "desc": desc, "nombre": nombre, "url": url}
     visitadas, base = [url], urlparse(url).netloc
     for a in sopa.find_all("a", href=True):
         if len(visitadas) >= max_paginas:
@@ -228,8 +252,6 @@ for act, items in DATOS.items():
 
 with st.sidebar:
     st.header("Análisis en línea")
-    empresa = st.text_input("Nombre de la empresa", "Gloria S.A.")
-    wa_num = st.text_input("Tu WhatsApp (con código de país)", "51", help="Ejemplo: 51999999999")
     url = st.text_input("Link de la empresa", placeholder="https://www.empresa.com")
     if st.button("🔎 Analizar sitio web", width="stretch"):
         if not url.strip():
@@ -246,9 +268,13 @@ with st.sidebar:
                 st.session_state["evid"] = r
                 st.session_state["paginas"] = paginas
                 st.session_state["info"] = info
+                st.session_state["empresa_nombre"] = info["nombre"]
                 st.success(f"Se leyeron {len(paginas)} página(s).")
             except Exception as e:
                 st.error(f"No se pudo leer el sitio: {e}")
+    empresa = st.text_input("Empresa detectada (editable)", key="empresa_nombre",
+                            placeholder="Se detecta sola al analizar el link").strip() or "Empresa analizada"
+    wa_num = st.text_input("Tu WhatsApp (con código de país)", "51", help="Ejemplo: 51999999999")
     if st.button("↺ Restablecer caso base", width="stretch"):
         for act, items in DATOS.items():
             for crit, base, *_ in items:
@@ -264,7 +290,7 @@ with st.sidebar:
 with ficha:
     inf = st.session_state.get("info")
     if inf:
-        st.subheader(inf["titulo"] or empresa)
+        st.subheader(inf["nombre"] or empresa)
         if inf["desc"]:
             st.write(inf["desc"])
 
