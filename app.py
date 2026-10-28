@@ -163,7 +163,7 @@ def leer_sitio(url, max_paginas=5):
     html = descargar(url)
     texto, sopa = texto_de(html)
     titulo, desc, cands = sacar_info(sopa, url)
-    info = {"titulo": titulo, "desc": desc, "img": bajar_imagen(cands), "url": url}
+    info = {"titulo": titulo, "desc": desc, "url": url}
     visitadas, base = [url], urlparse(url).netloc
     for a in sopa.find_all("a", href=True):
         if len(visitadas) >= max_paginas:
@@ -264,18 +264,10 @@ with st.sidebar:
 with ficha:
     inf = st.session_state.get("info")
     if inf:
-        i1, i2 = st.columns([1, 5])
-        with i1:
-            if inf["img"]:
-                st.image(inf["img"], width=130)
-            else:
-                st.markdown("<div style='font-size:60px;text-align:center'>🏢</div>", unsafe_allow_html=True)
-        with i2:
-            st.subheader(inf["titulo"] or empresa)
-            if inf["desc"]:
-                st.write(inf["desc"])
-            st.caption(f"Fuente: {inf['url']} · "
-                       + ("imagen tomada del sitio web" if inf["img"] else "no se encontró una imagen en el sitio"))
+        st.subheader(inf["titulo"] or empresa)
+        if inf["desc"]:
+            st.write(inf["desc"])
+        st.caption(f"Fuente: {inf['url']}")
 
 LAB1 = {1: "🔴 Crítico", 2: "🟠 Bajo", 3: "🟡 Medio", 4: "🟢 Alto", 5: "💚 Excelente"}
 LAB2 = {1: "😟", 2: "😕", 3: "😐", 4: "🙂", 5: "🤩"}
@@ -491,13 +483,7 @@ with banner:
     st.markdown(cadena_html(prom), unsafe_allow_html=True)
 
 st.divider()
-_inf = st.session_state.get("info")
-if _inf and _inf["img"]:
-    h1, h2 = st.columns([1, 8])
-    h1.image(_inf["img"], width=80)
-    h2.header(f"📊 Dashboard · {empresa}")
-else:
-    st.header(f"📊 Dashboard · {empresa}")
+st.header(f"📊 Dashboard · {empresa}")
 
 lvg = nivel(glob)
 conteo = df["Nivel"].value_counts().reindex(["Fortaleza", "Aceptable", "Debilidad"]).fillna(0).astype(int)
