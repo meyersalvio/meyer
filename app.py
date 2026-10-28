@@ -1,104 +1,265 @@
-import streamlit as st
+import re
+import unicodedata
+from urllib.parse import urljoin, urlparse
+
 import pandas as pd
 import plotly.graph_objects as go
+import requests
+import streamlit as st
+from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="Cadena de Valor", page_icon="⛓️", layout="wide")
-st.title("Analizador de Cadena de Valor")
-st.caption("Actividades primarias · Modelo de Porter")
 
-empresa = st.text_input("Empresa analizada", "Gloria S.A. (caso ilustrativo)")
+COLORES = {"Logística interna": "#1f77b4", "Operaciones (producción)": "#ff7f0e",
+           "Logística externa": "#2ca02c", "Marketing y ventas": "#9467bd", "Servicios": "#d62728"}
+NIVEL_COL = {"Fortaleza": "#2e9e5b", "Aceptable": "#e8a317", "Debilidad": "#d64545"}
 
+# (criterio, puntaje_base, indicador, solución, palabras clave para el análisis en línea)
 DATOS = {
     "Logística interna": [
-        ("Abastecimiento de materia prima", 3, "% de leche recibida dentro de especificación",
-         "Contratos de largo plazo con ganaderos, precio por calidad y asistencia técnica."),
-        ("Cadena de frío en recepción", 4, "% de lotes rechazados por temperatura",
-         "Mantener monitoreo con sensores y registros digitales."),
-        ("Control de inventarios", 2, "Rotación de inventario y % de mermas",
-         "Aplicar PEPS/FEFO, clasificación ABC y punto de reorden."),
+        ("Abastecimiento de materia prima", 3, "% de insumos recibidos dentro de especificación",
+         "Contratos de largo plazo con proveedores, precio por calidad y asistencia técnica.",
+         ["proveedor", "materia prima", "insumo", "abastecimiento", "compra", "acopio", "supplier"]),
+        ("Almacenamiento y cadena de frío", 3, "% de lotes rechazados o mermados",
+         "Monitoreo con sensores, registros digitales y almacenes adecuados.",
+         ["almacen", "bodega", "cadena de frio", "refriger", "inventario", "warehouse"]),
+        ("Control de inventarios", 3, "Rotación de inventario y % de mermas",
+         "Aplicar PEPS/FEFO, clasificación ABC y punto de reorden.",
+         ["stock", "inventario", "rotacion", "reposicion", "erp"]),
         ("Gestión de proveedores", 3, "Entregas a tiempo (OTIF)",
-         "Scorecard trimestral de proveedores y proveedores alternos."),
+         "Scorecard trimestral de proveedores y proveedores alternos.",
+         ["homologacion", "alianza", "proveedores", "socios", "aliados", "convenio"]),
     ],
     "Operaciones (producción)": [
-        ("Eficiencia de planta (OEE)", 3, "OEE = disponibilidad × rendimiento × calidad",
-         "Implementar SMED, TPM y tablero de OEE por línea."),
-        ("Calidad e inocuidad", 5, "% de reclamos por calidad",
-         "Sostener auditorías internas y mejora continua."),
-        ("Mantenimiento", 2, "MTBF, MTTR y % de mantenimiento preventivo",
-         "Plan preventivo y predictivo, repuestos críticos y capacitación."),
-        ("Uso de energía y mermas", 3, "kWh por litro procesado",
-         "Recuperar condensados y optimizar ciclos de limpieza CIP."),
+        ("Capacidad y eficiencia de planta", 3, "OEE = disponibilidad × rendimiento × calidad",
+         "Implementar SMED, TPM y tablero de OEE por línea.",
+         ["planta", "produccion", "fabrica", "capacidad", "manufactura", "proceso", "linea de"]),
+        ("Calidad e inocuidad", 3, "% de reclamos por calidad",
+         "Certificaciones (ISO, HACCP, BPM) y mejora continua.",
+         ["calidad", "iso", "haccp", "bpm", "certificacion", "inocuidad", "norma"]),
+        ("Mantenimiento y tecnología", 3, "MTBF, MTTR y % de mantenimiento preventivo",
+         "Plan preventivo y predictivo, repuestos críticos y capacitación.",
+         ["tecnologia", "maquinaria", "equipos", "automatiz", "mantenimiento", "innovacion"]),
+        ("Gestión ambiental y mermas", 3, "kWh o agua por unidad producida",
+         "Metas de eficiencia energética, reciclaje y reducción de residuos.",
+         ["ambiental", "sostenib", "residuos", "reciclaj", "energia", "huella", "ecologic"]),
     ],
     "Logística externa": [
-        ("Cobertura de distribución", 4, "% de puntos de venta atendidos",
-         "Distribuidores locales y preventa móvil en zonas rurales."),
-        ("Nivel de servicio (OTIF)", 3, "Pedidos completos y a tiempo",
-         "Pronóstico colaborativo de demanda y stock de seguridad por SKU."),
-        ("Costo logístico", 2, "Costo logístico como % de ventas",
-         "Software de ruteo (TMS), consolidación de carga y costo por ruta."),
+        ("Cobertura de distribución", 3, "% de puntos de venta atendidos",
+         "Distribuidores locales y preventa móvil en zonas de baja cobertura.",
+         ["distribu", "cobertura", "nacional", "sucursal", "tiendas", "puntos de venta", "sedes"]),
+        ("Entrega y nivel de servicio", 3, "Pedidos completos y a tiempo (OTIF)",
+         "Pronóstico colaborativo de demanda y stock de seguridad por SKU.",
+         ["delivery", "entrega", "despacho", "envio", "reparto", "flota", "transporte"]),
+        ("Costo y rutas logísticas", 3, "Costo logístico como % de ventas",
+         "Software de ruteo (TMS), consolidación de carga y costo por ruta.",
+         ["logistica", "ruta", "flota", "camion", "courier", "operador logistico"]),
         ("Trazabilidad y devoluciones", 3, "% de devoluciones y tiempo de respuesta",
-         "Código QR por lote y gestión de devoluciones con causa raíz."),
+         "Código QR por lote y gestión de devoluciones con causa raíz.",
+         ["trazabilidad", "seguimiento", "devolucion", "tracking", "garantia de entrega"]),
     ],
     "Marketing y ventas": [
-        ("Posicionamiento de marca", 5, "Recordación de marca (top of mind)",
-         "Reforzar la propuesta de valor en productos de mayor valor agregado."),
+        ("Posicionamiento de marca", 3, "Recordación de marca (top of mind)",
+         "Reforzar propuesta de valor y diferenciación.",
+         ["marca", "lider", "años de", "trayectoria", "reconoc", "premio", "confianza"]),
         ("Precios y promociones", 3, "Margen por canal y elasticidad precio",
-         "Segmentar precios por canal y evaluar el ROI de promociones."),
-        ("Canales digitales", 2, "% de ventas online y costo de adquisición",
-         "E-commerce B2B para bodegas, redes sociales y CRM."),
-        ("Fuerza de ventas", 3, "Ventas por vendedor y cumplimiento de cuota",
-         "Comisiones por mix y rentabilidad, y capacitación comercial."),
+         "Segmentar precios por canal y evaluar el ROI de promociones.",
+         ["precio", "oferta", "promocion", "descuento", "cupon", "combo", "%"]),
+        ("Canales digitales", 3, "% de ventas online y costo de adquisición",
+         "E-commerce, redes sociales y CRM con datos de compra.",
+         ["tienda online", "comprar", "carrito", "facebook", "instagram", "tiktok", "whatsapp", "linkedin", "e-commerce"]),
+        ("Fuerza de ventas y clientes", 3, "Ventas por vendedor y cumplimiento de cuota",
+         "Comisiones por mix y rentabilidad, y capacitación comercial.",
+         ["ventas", "cotiza", "clientes", "mayorista", "corporativ", "asesor comercial", "distribuidor"]),
     ],
     "Servicios": [
-        ("Atención de reclamos", 3, "Tiempo promedio de resolución",
-         "Canal único omnicanal con meta de resolución en 48 horas."),
-        ("Asesoría a bodegas", 3, "Visitas efectivas por cliente al mes",
-         "Programa de acompañamiento en exhibición, frío y rotación."),
-        ("Reposición y garantía", 4, "% de reposiciones en plazo",
-         "Reposición en la siguiente visita de ruta y registro digital."),
-        ("Satisfacción y fidelización", 2, "NPS y tasa de recompra",
-         "Encuesta NPS trimestral y programa de lealtad."),
+        ("Atención y reclamos", 3, "Tiempo promedio de resolución",
+         "Canal único omnicanal con meta de resolución en 48 horas.",
+         ["contacto", "reclamo", "libro de reclamaciones", "atencion al cliente", "soporte", "telefono", "correo"]),
+        ("Asesoría y soporte técnico", 3, "Visitas o consultas efectivas por cliente",
+         "Programa de acompañamiento y capacitación al cliente.",
+         ["asesoria", "capacitacion", "consultoria", "soporte tecnico", "instalacion", "mantenimiento"]),
+        ("Garantía y posventa", 3, "% de reposiciones en plazo",
+         "Reposición ágil y registro digital de incidencias.",
+         ["garantia", "posventa", "post venta", "reposicion", "cambio", "devolucion"]),
+        ("Satisfacción y fidelización", 3, "NPS y tasa de recompra",
+         "Encuesta NPS trimestral y programa de lealtad.",
+         ["testimonio", "opiniones", "fidelizacion", "puntos", "club", "suscripcion", "satisfaccion", "reseñas"]),
     ],
 }
+
+PAGINAS_UTILES = ["nosotros", "quienes", "about", "producto", "servicio", "contacto", "tienda",
+                  "sostenib", "calidad", "distribu", "empresa"]
+
+
+def quitar_tildes(t):
+    return "".join(unicodedata.normalize("NFD", c)[0] for c in t).lower()
+
 
 def nivel(p):
     return "Fortaleza" if p >= 4 else "Aceptable" if p >= 3 else "Debilidad"
 
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def descargar(url):
+    h = {"User-Agent": "Mozilla/5.0 (compatible; AnalizadorCadenaValor/1.0)"}
+    r = requests.get(url, headers=h, timeout=12)
+    r.raise_for_status()
+    return r.text
+
+
+def texto_de(html):
+    s = BeautifulSoup(html, "html.parser")
+    for t in s(["script", "style", "noscript"]):
+        t.decompose()
+    return re.sub(r"\s+", " ", s.get_text(" ")), s
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def leer_sitio(url, max_paginas=5):
+    html = descargar(url)
+    texto, sopa = texto_de(html)
+    visitadas, base = [url], urlparse(url).netloc
+    for a in sopa.find_all("a", href=True):
+        if len(visitadas) >= max_paginas:
+            break
+        l = urljoin(url, a["href"]).split("#")[0]
+        if urlparse(l).netloc == base and l not in visitadas and any(k in l.lower() for k in PAGINAS_UTILES):
+            try:
+                texto += " " + texto_de(descargar(l))[0]
+                visitadas.append(l)
+            except Exception:
+                pass
+    return texto, visitadas
+
+
+def analizar_texto(texto):
+    """Devuelve {(actividad, criterio): (puntaje, nº de menciones, fragmento)}"""
+    norm = quitar_tildes(texto)
+    res = {}
+    for act, items in DATOS.items():
+        for crit, _, _, _, claves in items:
+            hits, frag = 0, ""
+            for k in claves:
+                k2 = quitar_tildes(k)
+                n = norm.count(k2)
+                hits += n
+                if n and not frag:
+                    i = norm.find(k2)
+                    frag = "…" + texto[max(0, i - 70): i + 110].strip() + "…"
+            p = 2 if hits == 0 else 3 if hits <= 2 else 4 if hits <= 6 else 5
+            res[(act, crit)] = (p, hits, frag)
+    return res
+
+
+# ---------- Interfaz ----------
+st.title("⛓️ Analizador de Cadena de Valor")
+st.caption("Actividades primarias · Modelo de Porter · análisis manual o en línea desde el sitio web de la empresa")
+
+for act, items in DATOS.items():
+    for crit, base, *_ in items:
+        st.session_state.setdefault(f"{act}|{crit}", base)
+
+with st.sidebar:
+    st.header("Análisis en línea")
+    empresa = st.text_input("Nombre de la empresa", "Gloria S.A. (caso ilustrativo)")
+    url = st.text_input("Link de la empresa", placeholder="https://www.empresa.com")
+    if st.button("🔎 Analizar sitio web", use_container_width=True):
+        if not url.strip():
+            st.warning("Escribe un link.")
+        else:
+            if not url.startswith("http"):
+                url = "https://" + url.strip()
+            try:
+                with st.spinner("Leyendo el sitio..."):
+                    texto, paginas = leer_sitio(url)
+                r = analizar_texto(texto)
+                for (act, crit), (p, _, _) in r.items():
+                    st.session_state[f"{act}|{crit}"] = p
+                st.session_state["evid"] = r
+                st.session_state["paginas"] = paginas
+                st.success(f"Se leyeron {len(paginas)} página(s).")
+            except Exception as e:
+                st.error(f"No se pudo leer el sitio: {e}")
+    if st.button("↺ Restablecer caso base", use_container_width=True):
+        for act, items in DATOS.items():
+            for crit, base, *_ in items:
+                st.session_state[f"{act}|{crit}"] = base
+        st.session_state.pop("evid", None)
+    st.info("El análisis en línea cuenta menciones de palabras clave en el sitio. "
+            "Es una **estimación inicial**: ajusta los puntajes con los deslizadores usando datos reales.")
+    if "paginas" in st.session_state:
+        with st.expander("Páginas analizadas"):
+            for p in st.session_state["paginas"]:
+                st.write(p)
+
 filas = []
 tabs = st.tabs([f"{i+1}. {k}" for i, k in enumerate(DATOS)])
-for tab, (actividad, items) in zip(tabs, DATOS.items()):
+for tab, (act, items) in zip(tabs, DATOS.items()):
     with tab:
-        for criterio, punt, kpi, sol in items:
+        st.markdown(f"<h4 style='color:{COLORES[act]}'>{act}</h4>", unsafe_allow_html=True)
+        for crit, _, kpi, sol, _ in items:
             c1, c2 = st.columns([2, 3])
             with c1:
-                p = st.slider(criterio, 1, 5, punt, key=f"{actividad}-{criterio}")
+                p = st.slider(crit, 1, 5, key=f"{act}|{crit}")
                 st.caption(f"Indicador: {kpi}")
             with c2:
-                if p <= 3:
-                    st.warning(f"**{nivel(p)}** · Solución propuesta: {sol}")
-                else:
-                    st.success(f"**{nivel(p)}** · Para mantener: {sol}")
-            filas.append({"Actividad": actividad, "Criterio": criterio,
-                          "Puntaje": p, "Nivel": nivel(p), "Acción": sol})
+                lv = nivel(p)
+                accion = ("Solución propuesta" if p <= 3 else "Para mantener")
+                st.markdown(
+                    f"<div style='border-left:5px solid {NIVEL_COL[lv]};padding:6px 12px;background:{NIVEL_COL[lv]}18;border-radius:6px'>"
+                    f"<b style='color:{NIVEL_COL[lv]}'>{lv}</b> · <b>{accion}:</b> {sol}</div>", unsafe_allow_html=True)
+                ev = st.session_state.get("evid", {}).get((act, crit))
+                if ev and ev[2]:
+                    st.caption(f"Evidencia en el sitio ({ev[1]} menciones): {ev[2]}")
+                elif ev:
+                    st.caption("Sin menciones en el sitio analizado.")
+            filas.append({"Actividad": act, "Criterio": crit, "Puntaje": p, "Nivel": lv, "Acción": sol})
 
 df = pd.DataFrame(filas)
 prom = df.groupby("Actividad", sort=False)["Puntaje"].mean()
+glob = df["Puntaje"].mean()
 
 st.divider()
-st.header(f"Resumen: {empresa}")
-a, b = st.columns(2)
-with a:
-    fig = go.Figure(go.Scatterpolar(r=list(prom) + [prom.iloc[0]],
-                                    theta=list(prom.index) + [prom.index[0]], fill="toself"))
-    fig.update_layout(polar=dict(radialaxis=dict(range=[0, 5])), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
-with b:
-    st.metric("Puntaje global (1-5)", f"{df['Puntaje'].mean():.2f}")
-    st.dataframe(prom.round(2).rename("Promedio"), use_container_width=True)
+st.header(f"Resultados: {empresa}")
+
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Puntaje global", f"{glob:.2f} / 5")
+k2.metric("Mejor actividad", prom.idxmax(), f"{prom.max():.1f}")
+k3.metric("Actividad crítica", prom.idxmin(), f"{prom.min():.1f}", delta_color="inverse")
+k4.metric("Criterios en debilidad", int((df["Puntaje"] <= 2).sum()))
+
+g1, g2 = st.columns(2)
+with g1:
+    radar = go.Figure(go.Scatterpolar(r=list(prom) + [prom.iloc[0]], theta=list(prom.index) + [prom.index[0]],
+                                      fill="toself", line=dict(color="#0f6e56", width=3),
+                                      fillcolor="rgba(15,110,86,0.25)"))
+    radar.update_layout(title="Radar de la cadena de valor", polar=dict(radialaxis=dict(range=[0, 5])), showlegend=False)
+    st.plotly_chart(radar, use_container_width=True)
+with g2:
+    barras = go.Figure(go.Bar(x=prom.index, y=prom.values, marker_color=[COLORES[a] for a in prom.index],
+                              text=[f"{v:.1f}" for v in prom.values], textposition="outside"))
+    barras.update_layout(title="Puntaje promedio por actividad", yaxis=dict(range=[0, 5.5]))
+    st.plotly_chart(barras, use_container_width=True)
+
+g3, g4 = st.columns(2)
+with g3:
+    gauge = go.Figure(go.Indicator(mode="gauge+number", value=round(glob, 2),
+                                   title={"text": "Puntaje global"},
+                                   gauge={"axis": {"range": [1, 5]}, "bar": {"color": "#0f6e56"},
+                                          "steps": [{"range": [1, 2.5], "color": "#f4c7c0"},
+                                                    {"range": [2.5, 3.5], "color": "#fbe7b5"},
+                                                    {"range": [3.5, 5], "color": "#c4e8d2"}]}))
+    st.plotly_chart(gauge, use_container_width=True)
+with g4:
+    d = df.sort_values("Puntaje")
+    crit = go.Figure(go.Bar(x=d["Puntaje"], y=d["Criterio"], orientation="h",
+                            marker_color=[NIVEL_COL[n] for n in d["Nivel"]]))
+    crit.update_layout(title="Criterios ordenados (rojo = prioridad)", height=520, xaxis=dict(range=[0, 5]))
+    st.plotly_chart(crit, use_container_width=True)
 
 st.subheader("Plan de acción priorizado (puntaje ≤ 3)")
 plan = df[df["Puntaje"] <= 3].sort_values("Puntaje")
-st.dataframe(plan[["Actividad", "Criterio", "Puntaje", "Acción"]],
-             use_container_width=True, hide_index=True)
-st.download_button("Descargar resultados (CSV)", df.to_csv(index=False).encode("utf-8-sig"),
+st.dataframe(plan[["Actividad", "Criterio", "Puntaje", "Acción"]], use_container_width=True, hide_index=True)
+st.download_button("⬇ Descargar resultados (CSV)", df.to_csv(index=False).encode("utf-8-sig"),
                    "cadena_valor.csv", "text/csv")
