@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -152,6 +152,40 @@ def analizar_texto(texto):
     return res
 
 
+
+def grafico_actividad(act, fa):
+    n = [f["Criterio"] for f in fa]
+    v = [f["Puntaje"] for f in fa]
+    col = COLORES[act]
+    prom_a = sum(v) / len(v)
+    if act == "Logística interna":
+        fig = go.Figure(go.Bar(x=v, y=n, orientation="h", marker_color=[NIVEL_COL[nivel(x)] for x in v],
+                               text=v, textposition="outside"))
+        fig.update_layout(title="Barras horizontales por criterio", xaxis=dict(range=[0, 5.5]))
+    elif act == "Operaciones (producción)":
+        fig = go.Figure(go.Scatterpolar(r=v + [v[0]], theta=n + [n[0]], fill="toself",
+                                        line=dict(color=col, width=3), fillcolor="rgba(255,127,14,0.25)"))
+        fig.update_layout(title="Radar de operaciones", polar=dict(radialaxis=dict(range=[0, 5])), showlegend=False)
+    elif act == "Logística externa":
+        fig = go.Figure(go.Indicator(mode="gauge+number+delta", value=round(prom_a, 2), delta={"reference": 4},
+                                     title={"text": "Nivel de servicio logístico (meta 4)"},
+                                     gauge={"axis": {"range": [1, 5]}, "bar": {"color": col},
+                                            "threshold": {"line": {"color": "black", "width": 4}, "value": 4},
+                                            "steps": [{"range": [1, 2.5], "color": "#f4c7c0"},
+                                                      {"range": [2.5, 3.5], "color": "#fbe7b5"},
+                                                      {"range": [3.5, 5], "color": "#c4e8d2"}]}))
+    elif act == "Marketing y ventas":
+        o = sorted(zip(v, n), reverse=True)
+        fig = go.Figure(go.Funnel(y=[x[1] for x in o], x=[x[0] for x in o], textinfo="value",
+                                  marker=dict(color=["#9467bd", "#b08fd0", "#c9b2e0", "#ddd0ee"])))
+        fig.update_layout(title="Embudo de marketing y ventas (de mayor a menor)")
+    else:
+        fig = go.Figure([go.Bar(name="Actual", x=n, y=v, marker_color=col, text=v, textposition="outside"),
+                         go.Bar(name="Meta (4)", x=n, y=[4] * len(n), marker_color="#bbbbbb")])
+        fig.update_layout(title="Brecha frente a la meta", barmode="group", yaxis=dict(range=[0, 5.5]))
+    fig.update_layout(height=400, margin=dict(t=60, b=30))
+    return fig
+
 # ---------- Interfaz ----------
 st.title("⛓️ Analizador de Cadena de Valor")
 st.caption("Actividades primarias · Modelo de Porter · análisis manual o en línea desde el sitio web de la empresa")
@@ -163,6 +197,7 @@ for act, items in DATOS.items():
 with st.sidebar:
     st.header("Análisis en línea")
     empresa = st.text_input("Nombre de la empresa", "Gloria S.A. (caso ilustrativo)")
+    wa_num = st.text_input("Tu WhatsApp (con código de país)", "51", help="Ejemplo: 51999999999")
     url = st.text_input("Link de la empresa", placeholder="https://www.empresa.com")
     if st.button("🔎 Analizar sitio web", use_container_width=True):
         if not url.strip():
@@ -198,6 +233,7 @@ tabs = st.tabs([f"{i+1}. {k}" for i, k in enumerate(DATOS)])
 for tab, (act, items) in zip(tabs, DATOS.items()):
     with tab:
         st.markdown(f"<h4 style='color:{COLORES[act]}'>{act}</h4>", unsafe_allow_html=True)
+        ini = len(filas)
         for crit, _, kpi, sol, _ in items:
             c1, c2 = st.columns([2, 3])
             with c1:
@@ -215,6 +251,8 @@ for tab, (act, items) in zip(tabs, DATOS.items()):
                 elif ev:
                     st.caption("Sin menciones en el sitio analizado.")
             filas.append({"Actividad": act, "Criterio": crit, "Puntaje": p, "Nivel": lv, "Acción": sol})
+        st.markdown("#### Gráfica de la actividad")
+        st.plotly_chart(grafico_actividad(act, filas[ini:]), use_container_width=True, key=f"g-{act}")
 
 df = pd.DataFrame(filas)
 prom = df.groupby("Actividad", sort=False)["Puntaje"].mean()
@@ -263,3 +301,26 @@ plan = df[df["Puntaje"] <= 3].sort_values("Puntaje")
 st.dataframe(plan[["Actividad", "Criterio", "Puntaje", "Acción"]], use_container_width=True, hide_index=True)
 st.download_button("⬇ Descargar resultados (CSV)", df.to_csv(index=False).encode("utf-8-sig"),
                    "cadena_valor.csv", "text/csv")
+
+# ---------- WhatsApp ----------
+numero = re.sub(r"\D", "", wa_num)
+msg = (f"Hola, te comparto el análisis de cadena de valor de {empresa}: puntaje global {glob:.2f}/5. "
+       f"Mejor actividad: {prom.idxmax()} ({prom.max():.1f}). Actividad crítica: {prom.idxmin()} ({prom.min():.1f}). "
+       "¿Podemos conversar las mejoras?")
+wa_url = (f"https://wa.me/{numero}?text=" if len(numero) > 5 else "https://wa.me/?text=") + quote(msg)
+
+st.markdown(f"""
+<style>
+.wa-box{{background:linear-gradient(135deg,#25D366,#128C7E);border-radius:16px;padding:18px 22px;color:#fff;margin:14px 0}}
+.wa-box h3{{margin:0 0 4px 0;color:#fff}}
+.wa-fab{{position:fixed;right:22px;bottom:22px;z-index:9999;background:#25D366;color:#fff!important;text-decoration:none!important;
+ border-radius:50px;padding:12px 20px;font-weight:700;display:flex;gap:8px;align-items:center;
+ box-shadow:0 4px 14px rgba(0,0,0,.35);animation:pulso 2s infinite}}
+@keyframes pulso{{0%{{box-shadow:0 0 0 0 rgba(37,211,102,.7)}}70%{{box-shadow:0 0 0 18px rgba(37,211,102,0)}}100%{{box-shadow:0 0 0 0 rgba(37,211,102,0)}}}}
+</style>
+<div class="wa-box"><h3>💬 Conversemos por WhatsApp</h3>
+Envía este diagnóstico a un asesor, a tu equipo o a tu docente con un solo clic.</div>
+<a class="wa-fab" href="{wa_url}" target="_blank">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M12 2a10 10 0 0 0-8.6 15L2 22l5.1-1.3A10 10 0 1 0 12 2zm5.2 14.1c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.5-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.8s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.9 2.1c.1.2.1.4 0 .5l-.4.6-.4.4c-.1.2-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.2 1 2.1 1.3 2.4 1.5.3.1.5.1.6-.1l.9-1.1c.2-.3.4-.2.6-.1l2 1c.3.1.5.2.5.3.1.2.1.8-.1 1.3z"/></svg>
+WhatsApp</a>""", unsafe_allow_html=True)
+st.link_button("💬 Enviar resultados por WhatsApp", wa_url, use_container_width=True)
