@@ -116,10 +116,54 @@ def texto_de(html):
     return re.sub(r"\s+", " ", s.get_text(" ")), s
 
 
+def sacar_info(sopa, url):
+    def meta(*nombres):
+        for n in nombres:
+            t = sopa.find("meta", attrs={"property": n}) or sopa.find("meta", attrs={"name": n})
+            if t and t.get("content"):
+                return t["content"].strip()
+        return ""
+    titulo = meta("og:site_name", "og:title") or (sopa.title.string.strip() if sopa.title and sopa.title.string else "")
+    desc = meta("og:description", "description", "twitter:description")
+    c = []
+    for n in ("og:image", "twitter:image"):
+        v = meta(n)
+        if v:
+            c.append(urljoin(url, v))
+    for rel in ("apple-touch-icon", "icon", "shortcut icon"):
+        t = sopa.find("link", rel=lambda r: r and rel in " ".join(r).lower() if isinstance(r, list) else r and rel in r.lower())
+        if t and t.get("href"):
+            c.append(urljoin(url, t["href"]))
+    for im in sopa.find_all("img", src=True)[:40]:
+        if "logo" in (im["src"] + " ".join(im.get("class", [])) + (im.get("alt") or "")).lower():
+            c.append(urljoin(url, im["src"]))
+            break
+    c.append(urljoin(url, "/favicon.ico"))
+    return titulo, desc[:300], c
+
+
+def bajar_imagen(cands):
+    from io import BytesIO
+    from PIL import Image
+    for u in cands:
+        if u.lower().split("?")[0].endswith(".svg"):
+            continue
+        try:
+            r = requests.get(u, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            if r.status_code == 200 and 100 < len(r.content) < 4_000_000:
+                Image.open(BytesIO(r.content)).verify()
+                return r.content
+        except Exception:
+            continue
+    return None
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def leer_sitio(url, max_paginas=5):
     html = descargar(url)
     texto, sopa = texto_de(html)
+    titulo, desc, cands = sacar_info(sopa, url)
+    info = {"titulo": titulo, "desc": desc, "img": bajar_imagen(cands), "url": url}
     visitadas, base = [url], urlparse(url).netloc
     for a in sopa.find_all("a", href=True):
         if len(visitadas) >= max_paginas:
@@ -131,7 +175,7 @@ def leer_sitio(url, max_paginas=5):
                 visitadas.append(l)
             except Exception:
                 pass
-    return texto, visitadas
+    return texto, visitadas, info
 
 
 def analizar_texto(texto):
@@ -176,6 +220,7 @@ st.markdown("<style>.hero{background:linear-gradient(120deg,#0f6e56,#1f77b4 55%,
             "<p>Actividades primarias · Modelo de Porter · análisis manual o en línea desde el sitio web de la empresa</p></div>",
             unsafe_allow_html=True)
 banner = st.container()
+ficha = st.container()
 
 for act, items in DATOS.items():
     for crit, base, *_ in items:
@@ -194,12 +239,13 @@ with st.sidebar:
                 url = "https://" + url.strip()
             try:
                 with st.spinner("Leyendo el sitio..."):
-                    texto, paginas = leer_sitio(url)
+                    texto, paginas, info = leer_sitio(url)
                 r = analizar_texto(texto)
                 for (act, crit), (p, _, _) in r.items():
                     st.session_state[f"{act}|{crit}"] = p
                 st.session_state["evid"] = r
                 st.session_state["paginas"] = paginas
+                st.session_state["info"] = info
                 st.success(f"Se leyeron {len(paginas)} página(s).")
             except Exception as e:
                 st.error(f"No se pudo leer el sitio: {e}")
@@ -214,6 +260,22 @@ with st.sidebar:
         with st.expander("Páginas analizadas"):
             for p in st.session_state["paginas"]:
                 st.write(p)
+
+with ficha:
+    inf = st.session_state.get("info")
+    if inf:
+        i1, i2 = st.columns([1, 5])
+        with i1:
+            if inf["img"]:
+                st.image(inf["img"], width=130)
+            else:
+                st.markdown("<div style='font-size:60px;text-align:center'>🏢</div>", unsafe_allow_html=True)
+        with i2:
+            st.subheader(inf["titulo"] or empresa)
+            if inf["desc"]:
+                st.write(inf["desc"])
+            st.caption(f"Fuente: {inf['url']} · "
+                       + ("imagen tomada del sitio web" if inf["img"] else "no se encontró una imagen en el sitio"))
 
 LAB1 = {1: "🔴 Crítico", 2: "🟠 Bajo", 3: "🟡 Medio", 4: "🟢 Alto", 5: "💚 Excelente"}
 LAB2 = {1: "😟", 2: "😕", 3: "😐", 4: "🙂", 5: "🤩"}
@@ -429,7 +491,13 @@ with banner:
     st.markdown(cadena_html(prom), unsafe_allow_html=True)
 
 st.divider()
-st.header(f"📊 Dashboard · {empresa}")
+_inf = st.session_state.get("info")
+if _inf and _inf["img"]:
+    h1, h2 = st.columns([1, 8])
+    h1.image(_inf["img"], width=80)
+    h2.header(f"📊 Dashboard · {empresa}")
+else:
+    st.header(f"📊 Dashboard · {empresa}")
 
 lvg = nivel(glob)
 conteo = df["Nivel"].value_counts().reindex(["Fortaleza", "Aceptable", "Debilidad"]).fillna(0).astype(int)
