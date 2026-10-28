@@ -58,6 +58,25 @@ if "P" not in st.session_state:
                           mk("Carla", [4, 2, 5, 5, 3, 4, 3, 3, 3]), mk("Marco", [2, 4, 3, 2, 5, 3, 3, 5, 2]),
                           mk("Sofía", [4, 3, 2, 3, 3, 5, 5, 3, 5])]
 P = st.session_state.P
+for _n, _p in enumerate(P):
+    _p.setdefault("id", _n)
+
+
+def _del(pid):
+    st.session_state.P[:] = [q for q in st.session_state.P if q["id"] != pid]
+    for k in [k for k in st.session_state if str(k).startswith(f"s|{pid}|")]:
+        del st.session_state[k]
+    st.session_state["sel"] = 0
+
+
+def _add():
+    n = st.session_state.get("nn", "").strip()
+    if not n:
+        return
+    nid = max(q["id"] for q in st.session_state.P) + 1
+    st.session_state.P.append({"n": n, "id": nid, "extra": True,
+                               "v": [[st.session_state[f"nb{i}"]] * 4 for i in range(9)]})
+    st.session_state["sel"] = len(st.session_state.P) - 1
 
 
 def sc(p, i):
@@ -90,23 +109,24 @@ def radar(ser, h=430):
 
 st.markdown("<div style='background:linear-gradient(120deg,#6d3fd2,#e5484d 60%,#e08a00);color:#fff;border-radius:18px;"
             "padding:18px 24px;margin-bottom:10px'><h1 style='color:#fff;margin:0;font-size:28px'>🧠 Capital Intelectual · Talento Humano</h1>"
-            "<p style='margin:4px 0 0;opacity:.92'>Mapa de las 9 inteligencias múltiples (Gardner) con 4 sub-desarrollos cada una, "
-            "y dinámicas en vivo para exponer.</p></div>", unsafe_allow_html=True)
+            "</div>", unsafe_allow_html=True)
 
 t0, t1, t2, t3 = st.tabs(["👥 Personas", "⚔️ Duelo", "🎯 Armador de equipos", "🎡 Ruleta de retos"])
 
 # ---------------- Personas ----------------
 with t0:
-    c1, c2 = st.columns([3, 2])
-    with c1:
-        sel = st.radio("Persona", range(len(P)), format_func=lambda i: P[i]["n"], horizontal=True)
-    with c2:
-        with st.form("add", clear_on_submit=True):
-            nn = st.text_input("Nueva persona")
-            if st.form_submit_button("➕ Agregar") and nn.strip():
-                P.append(mk(nn.strip(), [3] * 9))
-                st.rerun()
+    sel = st.radio("Persona", range(len(P)), format_func=lambda i: P[i]["n"], horizontal=True, key="sel")
     p = P[sel]
+    if p.get("extra"):
+        st.button("🗑️ Eliminar a " + p["n"], on_click=_del, args=(p["id"],), key="del")
+    with st.expander("➕ Agregar persona y evaluar sus inteligencias"):
+        with st.form("add", clear_on_submit=True):
+            st.text_input("Nombre", key="nn")
+            st.caption("Elige el nivel (1 a 5) de cada inteligencia. Luego puedes afinar los sub-desarrollos abajo.")
+            cs = st.columns(3)
+            for i, x in enumerate(I):
+                cs[i % 3].select_slider(f"{x['e']} {x['n']}", [1, 2, 3, 4, 5], value=3, key=f"nb{i}")
+            st.form_submit_button("Guardar persona", on_click=_add)
     top = st.container()
     st.subheader("Sub-desarrollos por inteligencia")
     st.caption("Abre cada inteligencia y mueve sus 4 sub-desarrollos. Todo se actualiza en vivo.")
@@ -114,14 +134,14 @@ with t0:
         with st.expander(f"{x['e']} {x['n']}"):
             cols = st.columns(4)
             for j, s in enumerate(x["s"]):
-                k = f"s|{sel}|{i}|{j}"
+                k = f"s|{p['id']}|{i}|{j}"
                 st.session_state.setdefault(k, p["v"][i][j])
                 p["v"][i][j] = cols[j].slider(s, 1, 5, key=k)
             st.progress(sc(p, i) / 5, text=f"{x['n']}: {sc(p, i):.1f} / 5")
     with top:
         a, b = st.columns(2)
         a.subheader(f"Constelación de talento de {p['n']}")
-        a.plotly_chart(radar([(p, COL[sel % 8])]), width="stretch")
+        a.plotly_chart(radar([(p, COL[p["id"] % 8])]), width="stretch")
         s = [sc(p, i) for i in range(9)]
         o = sorted(range(9), key=lambda i: -s[i])
         b.metric("Índice de Capital Intelectual", f"{ici(p)} / 100", lvl(ici(p)), delta_color="off")
@@ -139,13 +159,13 @@ with t1:
     A, B = P[ia], P[ib]
     sin = round(sum(max(sc(A, i), sc(B, i)) for i in range(9)) / 9 * 20)
     g1, g2 = st.columns(2)
-    g1.plotly_chart(radar([(A, COL[ia % 8]), (B, COL[ib % 8] if ib != ia else "#888")]), width="stretch")
+    g1.plotly_chart(radar([(A, COL[A["id"] % 8]), (B, COL[B["id"] % 8] if ib != ia else "#888")]), width="stretch")
     with g2:
         st.metric("Sinergia del dúo", f"{sin}%", help="Se toma el mejor puntaje de los dos en cada inteligencia.")
         fig = go.Figure([go.Bar(y=[f"{x['e']} {SH[i]}" for i, x in enumerate(I)], x=[sc(A, i) for i in range(9)],
-                                orientation="h", name=A["n"], marker_color=COL[ia % 8]),
+                                orientation="h", name=A["n"], marker_color=COL[A["id"] % 8]),
                          go.Bar(y=[f"{x['e']} {SH[i]}" for i, x in enumerate(I)], x=[sc(B, i) for i in range(9)],
-                                orientation="h", name=B["n"], marker_color=COL[ib % 8] if ib != ia else "#888")])
+                                orientation="h", name=B["n"], marker_color=COL[B["id"] % 8] if ib != ia else "#888")])
         fig.update_layout(barmode="group", height=400, xaxis=dict(range=[0, 5]), margin=dict(t=10, b=10),
                           yaxis=dict(autorange="reversed"), legend=dict(orientation="h"))
         st.plotly_chart(fig, width="stretch")
@@ -173,7 +193,7 @@ with t2:
         for n, j in enumerate(best):
             cub = [i for i in need if sc(P[j], i) == max(sc(P[q], i) for q in best)]
             cols[n].markdown(
-                f"<div style='background:{COL[j % 8]};color:#fff;border-radius:14px;padding:14px'><b style='font-size:18px'>{P[j]['n']}</b>"
+                f"<div style='background:{COL[P[j]["id"] % 8]};color:#fff;border-radius:14px;padding:14px'><b style='font-size:18px'>{P[j]['n']}</b>"
                 f"<div style='font-size:24px'>{' '.join(I[i]['e'] for i in cub) or '👤'}</div>"
                 f"<div style='font-size:12px'>Aporta: {', '.join(SH[i] for i in cub) or 'apoyo'}</div></div>", unsafe_allow_html=True)
         mx = [max(sc(P[j], i) for j in best) for i in need]
