@@ -267,7 +267,6 @@ with ficha:
         st.subheader(inf["titulo"] or empresa)
         if inf["desc"]:
             st.write(inf["desc"])
-        st.caption(f"Fuente: {inf['url']}")
 
 LAB1 = {1: "🔴 Crítico", 2: "🟠 Bajo", 3: "🟡 Medio", 4: "🟢 Alto", 5: "💚 Excelente"}
 LAB2 = {1: "😟", 2: "😕", 3: "😐", 4: "🙂", 5: "🤩"}
