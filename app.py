@@ -158,37 +158,78 @@ def grafico_actividad(act, fa):
     v = [f["Puntaje"] for f in fa]
     col = COLORES[act]
     prom_a = sum(v) / len(v)
+    cn = [x.replace(" y ", "<br>y ").replace(" de ", "<br>de ") if len(x) > 18 else x for x in n]
     if act == "Logística interna":
-        fig = go.Figure(go.Bar(x=v, y=n, orientation="h", marker_color=[NIVEL_COL[nivel(x)] for x in v],
-                               text=v, textposition="outside"))
-        fig.update_layout(title="Barras horizontales por criterio", xaxis=dict(range=[0, 5.5]))
+        # Flujo Sankey: cada criterio "alimenta" la actividad con un grosor = su puntaje
+        etiquetas = [f"{x} ({p}/5)" for x, p in zip(n, v)] + [f"{act}: {prom_a:.1f}/5"]
+        fig = go.Figure(go.Sankey(
+            node=dict(label=etiquetas, pad=22, thickness=22,
+                      color=[NIVEL_COL[nivel(p)] for p in v] + [col]),
+            link=dict(source=[0, 1, 2, 3], target=[4] * 4, value=v,
+                      color=[NIVEL_COL[nivel(p)].replace("#", "#") + "88" for p in v])))
+        fig.update_layout(title="Flujo de valor: de cada criterio hacia la actividad")
     elif act == "Operaciones (producción)":
-        fig = go.Figure(go.Scatterpolar(r=v + [v[0]], theta=n + [n[0]], fill="toself",
-                                        line=dict(color=col, width=3), fillcolor="rgba(255,127,14,0.25)"))
-        fig.update_layout(title="Radar de operaciones", polar=dict(radialaxis=dict(range=[0, 5])), showlegend=False)
+        # Rosa polar multicolor
+        fig = go.Figure(go.Barpolar(r=v, theta=cn, width=[70] * 4,
+                                    marker=dict(color=["#ff7f0e", "#ffb347", "#f4511e", "#ffa000"],
+                                                line=dict(color="white", width=2)),
+                                    text=[f"{p}/5" for p in v], hovertemplate="%{theta}: %{r}/5<extra></extra>"))
+        fig.update_layout(title="Rosa de operaciones", showlegend=False,
+                          polar=dict(radialaxis=dict(range=[0, 5], showticklabels=True), hole=0.12))
     elif act == "Logística externa":
-        fig = go.Figure(go.Indicator(mode="gauge+number+delta", value=round(prom_a, 2), delta={"reference": 4},
-                                     title={"text": "Nivel de servicio logístico (meta 4)"},
-                                     gauge={"axis": {"range": [1, 5]}, "bar": {"color": col},
-                                            "threshold": {"line": {"color": "black", "width": 4}, "value": 4},
-                                            "steps": [{"range": [1, 2.5], "color": "#f4c7c0"},
-                                                      {"range": [2.5, 3.5], "color": "#fbe7b5"},
-                                                      {"range": [3.5, 5], "color": "#c4e8d2"}]}))
+        # Burbujas con degradado y línea de meta
+        fig = go.Figure()
+        fig.add_hline(y=4, line_dash="dash", line_color="#2ca02c",
+                      annotation_text="Meta de servicio (4)", annotation_position="top left")
+        fig.add_trace(go.Scatter(x=cn, y=v, mode="markers+text", text=[f"<b>{p}</b>" for p in v],
+                                 textfont=dict(color="white", size=18),
+                                 marker=dict(size=[p * 26 for p in v], color=v, colorscale="Tealgrn",
+                                             cmin=1, cmax=5, line=dict(color="white", width=3), opacity=0.9),
+                                 hovertemplate="%{x}: %{y}/5<extra></extra>"))
+        fig.update_layout(title="Burbujas de desempeño logístico", yaxis=dict(range=[0, 6]), showlegend=False)
     elif act == "Marketing y ventas":
-        o = sorted(zip(v, n), reverse=True)
-        fig = go.Figure(go.Funnel(y=[x[1] for x in o], x=[x[0] for x in o], textinfo="value",
-                                  marker=dict(color=["#9467bd", "#b08fd0", "#c9b2e0", "#ddd0ee"])))
-        fig.update_layout(title="Embudo de marketing y ventas (de mayor a menor)")
+        # Treemap con escala de color
+        raiz = act
+        fig = go.Figure(go.Treemap(labels=[raiz] + n, parents=[""] + [raiz] * 4, values=[sum(v)] + v,
+                                   branchvalues="total", marker=dict(colors=[3] + v, colorscale="Purples",
+                                                                     cmin=0, cmax=5.5, line=dict(width=3, color="white")),
+                                   texttemplate="<b>%{label}</b><br>%{value}/5", textfont=dict(size=16)))
+        fig.update_layout(title="Mapa de calor de marketing y ventas (más grande = más fuerte)")
     else:
-        fig = go.Figure([go.Bar(name="Actual", x=n, y=v, marker_color=col, text=v, textposition="outside"),
-                         go.Bar(name="Meta (4)", x=n, y=[4] * len(n), marker_color="#bbbbbb")])
-        fig.update_layout(title="Brecha frente a la meta", barmode="group", yaxis=dict(range=[0, 5.5]))
-    fig.update_layout(height=400, margin=dict(t=60, b=30))
+        # Dona con puntaje al centro y el criterio más débil separado
+        pull = [0.12 if p == min(v) else 0 for p in v]
+        fig = go.Figure(go.Pie(labels=n, values=v, hole=0.62, pull=pull, sort=False,
+                               marker=dict(colors=["#d62728", "#ff6f61", "#ff9f80", "#f7c6a3"],
+                                           line=dict(color="white", width=3)),
+                               textinfo="label+value"))
+        fig.update_layout(title="Dona de servicios (el criterio separado es el más débil)", showlegend=False,
+                          annotations=[dict(text=f"<b>{prom_a:.1f}</b><br>de 5", x=0.5, y=0.5, font_size=30, showarrow=False)])
+    fig.update_layout(height=430, margin=dict(t=60, b=30))
     return fig
 
+
+def cadena_html(prom):
+    cs = ""
+    for i, (a, p) in enumerate(prom.items()):
+        cs += (f"<div class='chev' style='background:{COLORES[a]}'><div class='n'>{i+1}</div>"
+               f"<div class='t'>{a}</div><div class='p'>{p:.1f}<small>/5</small></div></div>")
+    return ("<style>.cadena{display:flex;gap:0;margin:8px 0 18px;overflow-x:auto}"
+            ".chev{flex:1;min-width:150px;color:#fff;padding:14px 26px 14px 34px;"
+            "clip-path:polygon(0 0,88% 0,100% 50%,88% 100%,0 100%,12% 50%);margin-right:-14px;text-align:center}"
+            ".chev .n{font-size:12px;opacity:.85}.chev .t{font-weight:700;font-size:14px;line-height:1.2}"
+            ".chev .p{font-size:26px;font-weight:800}.chev small{font-size:13px;font-weight:500}"
+            ".hero{background:linear-gradient(120deg,#0f6e56,#1f77b4 55%,#9467bd);color:#fff;border-radius:16px;"
+            "padding:20px 26px;margin-bottom:10px}.hero h1{color:#fff;margin:0;font-size:30px}"
+            ".hero p{margin:4px 0 0;opacity:.92}</style><div class='cadena'>" + cs + "</div>")
+
+
 # ---------- Interfaz ----------
-st.title("⛓️ Analizador de Cadena de Valor")
-st.caption("Actividades primarias · Modelo de Porter · análisis manual o en línea desde el sitio web de la empresa")
+st.markdown("<style>.hero{background:linear-gradient(120deg,#0f6e56,#1f77b4 55%,#9467bd);color:#fff;border-radius:16px;"
+            "padding:20px 26px;margin-bottom:10px}.hero h1{color:#fff;margin:0;font-size:30px}.hero p{margin:4px 0 0;opacity:.92}</style>"
+            "<div class='hero'><h1>⛓️ Analizador de Cadena de Valor</h1>"
+            "<p>Actividades primarias · Modelo de Porter · análisis manual o en línea desde el sitio web de la empresa</p></div>",
+            unsafe_allow_html=True)
+banner = st.container()
 
 for act, items in DATOS.items():
     for crit, base, *_ in items:
@@ -257,6 +298,8 @@ for tab, (act, items) in zip(tabs, DATOS.items()):
 df = pd.DataFrame(filas)
 prom = df.groupby("Actividad", sort=False)["Puntaje"].mean()
 glob = df["Puntaje"].mean()
+with banner:
+    st.markdown(cadena_html(prom), unsafe_allow_html=True)
 
 st.divider()
 st.header(f"Resultados: {empresa}")
@@ -275,9 +318,15 @@ with g1:
     radar.update_layout(title="Radar de la cadena de valor", polar=dict(radialaxis=dict(range=[0, 5])), showlegend=False)
     st.plotly_chart(radar, use_container_width=True)
 with g2:
-    barras = go.Figure(go.Bar(x=prom.index, y=prom.values, marker_color=[COLORES[a] for a in prom.index],
-                              text=[f"{v:.1f}" for v in prom.values], textposition="outside"))
-    barras.update_layout(title="Puntaje promedio por actividad", yaxis=dict(range=[0, 5.5]))
+    ids = [empresa] + list(DATOS) + list(df["Criterio"])
+    pars = [""] + [empresa] * 5 + list(df["Actividad"])
+    vals = [df["Puntaje"].sum()] + [df[df["Actividad"] == a]["Puntaje"].sum() for a in DATOS] + list(df["Puntaje"])
+    cols = ["#37474f"] + [COLORES[a] for a in DATOS] + [NIVEL_COL[n] for n in df["Nivel"]]
+    barras = go.Figure(go.Sunburst(labels=ids, parents=pars, values=vals, branchvalues="total",
+                                   marker=dict(colors=cols, line=dict(color="white", width=2)),
+                                   insidetextorientation="radial"))
+    barras.update_layout(title="Cadena de valor completa (anillo exterior: verde fortaleza, ámbar aceptable, rojo debilidad)",
+                         height=520, margin=dict(t=60, b=10))
     st.plotly_chart(barras, use_container_width=True)
 
 g3, g4 = st.columns(2)
