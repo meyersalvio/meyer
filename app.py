@@ -153,61 +153,6 @@ def analizar_texto(texto):
 
 
 
-def grafico_actividad(act, fa):
-    n = [f["Criterio"] for f in fa]
-    v = [f["Puntaje"] for f in fa]
-    col = COLORES[act]
-    prom_a = sum(v) / len(v)
-    cn = [x.replace(" y ", "<br>y ").replace(" de ", "<br>de ") if len(x) > 18 else x for x in n]
-    if act == "Logística interna":
-        # Flujo Sankey: cada criterio "alimenta" la actividad con un grosor = su puntaje
-        etiquetas = [f"{x} ({p}/5)" for x, p in zip(n, v)] + [f"{act}: {prom_a:.1f}/5"]
-        fig = go.Figure(go.Sankey(
-            node=dict(label=etiquetas, pad=22, thickness=22,
-                      color=[NIVEL_COL[nivel(p)] for p in v] + [col]),
-            link=dict(source=[0, 1, 2, 3], target=[4] * 4, value=v,
-                      color=[NIVEL_COL[nivel(p)].replace("#", "#") + "88" for p in v])))
-        fig.update_layout(title="Flujo de valor: de cada criterio hacia la actividad")
-    elif act == "Operaciones (producción)":
-        # Rosa polar multicolor
-        fig = go.Figure(go.Barpolar(r=v, theta=cn, width=[70] * 4,
-                                    marker=dict(color=["#ff7f0e", "#ffb347", "#f4511e", "#ffa000"],
-                                                line=dict(color="white", width=2)),
-                                    text=[f"{p}/5" for p in v], hovertemplate="%{theta}: %{r}/5<extra></extra>"))
-        fig.update_layout(title="Rosa de operaciones", showlegend=False,
-                          polar=dict(radialaxis=dict(range=[0, 5], showticklabels=True), hole=0.12))
-    elif act == "Logística externa":
-        # Burbujas con degradado y línea de meta
-        fig = go.Figure()
-        fig.add_hline(y=4, line_dash="dash", line_color="#2ca02c",
-                      annotation_text="Meta de servicio (4)", annotation_position="top left")
-        fig.add_trace(go.Scatter(x=cn, y=v, mode="markers+text", text=[f"<b>{p}</b>" for p in v],
-                                 textfont=dict(color="white", size=18),
-                                 marker=dict(size=[p * 26 for p in v], color=v, colorscale="Tealgrn",
-                                             cmin=1, cmax=5, line=dict(color="white", width=3), opacity=0.9),
-                                 hovertemplate="%{x}: %{y}/5<extra></extra>"))
-        fig.update_layout(title="Burbujas de desempeño logístico", yaxis=dict(range=[0, 6]), showlegend=False)
-    elif act == "Marketing y ventas":
-        # Treemap con escala de color
-        raiz = act
-        fig = go.Figure(go.Treemap(labels=[raiz] + n, parents=[""] + [raiz] * 4, values=[sum(v)] + v,
-                                   branchvalues="total", marker=dict(colors=[3] + v, colorscale="Purples",
-                                                                     cmin=0, cmax=5.5, line=dict(width=3, color="white")),
-                                   texttemplate="<b>%{label}</b><br>%{value}/5", textfont=dict(size=16)))
-        fig.update_layout(title="Mapa de calor de marketing y ventas (más grande = más fuerte)")
-    else:
-        # Dona con puntaje al centro y el criterio más débil separado
-        pull = [0.12 if p == min(v) else 0 for p in v]
-        fig = go.Figure(go.Pie(labels=n, values=v, hole=0.62, pull=pull, sort=False,
-                               marker=dict(colors=["#d62728", "#ff6f61", "#ff9f80", "#f7c6a3"],
-                                           line=dict(color="white", width=3)),
-                               textinfo="label+value"))
-        fig.update_layout(title="Dona de servicios (el criterio separado es el más débil)", showlegend=False,
-                          annotations=[dict(text=f"<b>{prom_a:.1f}</b><br>de 5", x=0.5, y=0.5, font_size=30, showarrow=False)])
-    fig.update_layout(height=430, margin=dict(t=60, b=30))
-    return fig
-
-
 def cadena_html(prom):
     cs = ""
     for i, (a, p) in enumerate(prom.items()):
@@ -274,7 +219,6 @@ tabs = st.tabs([f"{i+1}. {k}" for i, k in enumerate(DATOS)])
 for tab, (act, items) in zip(tabs, DATOS.items()):
     with tab:
         st.markdown(f"<h4 style='color:{COLORES[act]}'>{act}</h4>", unsafe_allow_html=True)
-        ini = len(filas)
         for crit, _, kpi, sol, _ in items:
             c1, c2 = st.columns([2, 3])
             with c1:
@@ -292,8 +236,6 @@ for tab, (act, items) in zip(tabs, DATOS.items()):
                 elif ev:
                     st.caption("Sin menciones en el sitio analizado.")
             filas.append({"Actividad": act, "Criterio": crit, "Puntaje": p, "Nivel": lv, "Acción": sol})
-        st.markdown("#### Gráfica de la actividad")
-        st.plotly_chart(grafico_actividad(act, filas[ini:]), use_container_width=True, key=f"g-{act}")
 
 df = pd.DataFrame(filas)
 prom = df.groupby("Actividad", sort=False)["Puntaje"].mean()
@@ -302,51 +244,70 @@ with banner:
     st.markdown(cadena_html(prom), unsafe_allow_html=True)
 
 st.divider()
-st.header(f"Resultados: {empresa}")
+st.header(f"📊 Dashboard · {empresa}")
 
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Puntaje global", f"{glob:.2f} / 5")
-k2.metric("Mejor actividad", prom.idxmax(), f"{prom.max():.1f}")
-k3.metric("Actividad crítica", prom.idxmin(), f"{prom.min():.1f}", delta_color="inverse")
-k4.metric("Criterios en debilidad", int((df["Puntaje"] <= 2).sum()))
+lvg = nivel(glob)
+conteo = df["Nivel"].value_counts().reindex(["Fortaleza", "Aceptable", "Debilidad"]).fillna(0).astype(int)
+def tarjeta(titulo, valor, sub, color):
+    return (f"<div style='flex:1;min-width:170px;background:{color}1a;border-left:6px solid {color};"
+            f"border-radius:12px;padding:12px 16px'><div style='font-size:12px;opacity:.75'>{titulo}</div>"
+            f"<div style='font-size:28px;font-weight:800;color:{color}'>{valor}</div>"
+            f"<div style='font-size:12px;opacity:.8'>{sub}</div></div>")
+st.markdown("<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px'>"
+            + tarjeta("Puntaje global", f"{glob:.2f} / 5", lvg, NIVEL_COL[lvg])
+            + tarjeta("Mejor actividad", f"{prom.max():.1f}", prom.idxmax(), "#2e9e5b")
+            + tarjeta("Actividad crítica", f"{prom.min():.1f}", prom.idxmin(), "#d64545")
+            + tarjeta("Fortalezas / Debilidades", f"{conteo['Fortaleza']} / {conteo['Debilidad']}",
+                      f"de {len(df)} criterios evaluados", "#1f77b4") + "</div>", unsafe_allow_html=True)
 
-g1, g2 = st.columns(2)
-with g1:
+f1, f2 = st.columns(2)
+with f1:
     radar = go.Figure(go.Scatterpolar(r=list(prom) + [prom.iloc[0]], theta=list(prom.index) + [prom.index[0]],
                                       fill="toself", line=dict(color="#0f6e56", width=3),
                                       fillcolor="rgba(15,110,86,0.25)"))
-    radar.update_layout(title="Radar de la cadena de valor", polar=dict(radialaxis=dict(range=[0, 5])), showlegend=False)
+    radar.update_layout(title="Radar por actividad", polar=dict(radialaxis=dict(range=[0, 5])),
+                        showlegend=False, height=400, margin=dict(t=60, b=20))
     st.plotly_chart(radar, use_container_width=True)
-with g2:
+with f2:
     ids = [empresa] + list(DATOS) + list(df["Criterio"])
     pars = [""] + [empresa] * 5 + list(df["Actividad"])
     vals = [df["Puntaje"].sum()] + [df[df["Actividad"] == a]["Puntaje"].sum() for a in DATOS] + list(df["Puntaje"])
     cols = ["#37474f"] + [COLORES[a] for a in DATOS] + [NIVEL_COL[n] for n in df["Nivel"]]
-    barras = go.Figure(go.Sunburst(labels=ids, parents=pars, values=vals, branchvalues="total",
-                                   marker=dict(colors=cols, line=dict(color="white", width=2)),
-                                   insidetextorientation="radial"))
-    barras.update_layout(title="Cadena de valor completa (anillo exterior: verde fortaleza, ámbar aceptable, rojo debilidad)",
-                         height=520, margin=dict(t=60, b=10))
-    st.plotly_chart(barras, use_container_width=True)
+    sol = go.Figure(go.Sunburst(labels=ids, parents=pars, values=vals, branchvalues="total",
+                                marker=dict(colors=cols, line=dict(color="white", width=2)),
+                                insidetextorientation="radial"))
+    sol.update_layout(title="Cadena completa (anillo exterior = nivel)", height=400, margin=dict(t=60, b=10))
+    st.plotly_chart(sol, use_container_width=True)
 
-g3, g4 = st.columns(2)
-with g3:
-    gauge = go.Figure(go.Indicator(mode="gauge+number", value=round(glob, 2),
-                                   title={"text": "Puntaje global"},
-                                   gauge={"axis": {"range": [1, 5]}, "bar": {"color": "#0f6e56"},
-                                          "steps": [{"range": [1, 2.5], "color": "#f4c7c0"},
-                                                    {"range": [2.5, 3.5], "color": "#fbe7b5"},
-                                                    {"range": [3.5, 5], "color": "#c4e8d2"}]}))
-    st.plotly_chart(gauge, use_container_width=True)
-with g4:
-    d = df.sort_values("Puntaje")
-    crit = go.Figure(go.Bar(x=d["Puntaje"], y=d["Criterio"], orientation="h",
-                            marker_color=[NIVEL_COL[n] for n in d["Nivel"]]))
-    crit.update_layout(title="Criterios ordenados (rojo = prioridad)", height=520, xaxis=dict(range=[0, 5]))
-    st.plotly_chart(crit, use_container_width=True)
+f3, f4 = st.columns([3, 2])
+with f3:
+    mat = [df[df["Actividad"] == a]["Puntaje"].tolist() for a in DATOS]
+    nom = [df[df["Actividad"] == a]["Criterio"].tolist() for a in DATOS]
+    heat = go.Figure(go.Heatmap(z=mat, x=["Criterio 1", "Criterio 2", "Criterio 3", "Criterio 4"], y=list(DATOS),
+                                text=mat, texttemplate="<b>%{text}</b>", customdata=nom,
+                                hovertemplate="%{customdata}: %{z}/5<extra></extra>", zmin=1, zmax=5, xgap=4, ygap=4,
+                                colorscale=[[0, "#d64545"], [0.5, "#e8a317"], [1, "#2e9e5b"]], showscale=False))
+    heat.update_layout(title="Mapa de calor: actividad × criterio", height=380, margin=dict(t=60, b=20),
+                       yaxis=dict(autorange="reversed"))
+    st.plotly_chart(heat, use_container_width=True)
+with f4:
+    don = go.Figure(go.Pie(labels=list(conteo.index), values=list(conteo.values), hole=0.62, sort=False,
+                           marker=dict(colors=[NIVEL_COL[n] for n in conteo.index], line=dict(color="white", width=3)),
+                           textinfo="label+value"))
+    don.update_layout(title="Distribución de niveles", height=380, margin=dict(t=60, b=20), showlegend=False,
+                      annotations=[dict(text=f"<b>{glob:.1f}</b><br>global", x=0.5, y=0.5, font_size=24, showarrow=False)])
+    st.plotly_chart(don, use_container_width=True)
+
+d = df.sort_values("Puntaje")
+rank = go.Figure(go.Bar(x=d["Puntaje"], y=d["Criterio"], orientation="h",
+                        marker_color=[NIVEL_COL[n] for n in d["Nivel"]], text=d["Puntaje"], textposition="outside"))
+rank.update_layout(title="Ranking de criterios (rojo = prioridad de mejora)", height=560,
+                   xaxis=dict(range=[0, 5.5]), margin=dict(t=60, b=20))
+st.plotly_chart(rank, use_container_width=True)
 
 st.subheader("Plan de acción priorizado (puntaje ≤ 3)")
-plan = df[df["Puntaje"] <= 3].sort_values("Puntaje")
+filtro = st.multiselect("Filtrar por actividad", list(DATOS), default=list(DATOS))
+plan = df[(df["Puntaje"] <= 3) & (df["Actividad"].isin(filtro))].sort_values("Puntaje")
 st.dataframe(plan[["Actividad", "Criterio", "Puntaje", "Acción"]], use_container_width=True, hide_index=True)
 st.download_button("⬇ Descargar resultados (CSV)", df.to_csv(index=False).encode("utf-8-sig"),
                    "cadena_valor.csv", "text/csv")
