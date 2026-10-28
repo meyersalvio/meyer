@@ -228,7 +228,7 @@ for act, items in DATOS.items():
 
 with st.sidebar:
     st.header("Análisis en línea")
-    empresa = st.text_input("Nombre de la empresa", "Gloria S.A. (caso ilustrativo)")
+    empresa = st.text_input("Nombre de la empresa", "Gloria S.A.")
     wa_num = st.text_input("Tu WhatsApp (con código de país)", "51", help="Ejemplo: 51999999999")
     url = st.text_input("Link de la empresa", placeholder="https://www.empresa.com")
     if st.button("🔎 Analizar sitio web", width="stretch"):
