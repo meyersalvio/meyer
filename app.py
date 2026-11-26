@@ -615,47 +615,18 @@ def excel_bytes():
     return out.getvalue()
 
 
-def pdf_bytes():
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-    ss = getSampleStyleSheet()
-    sm = ss["BodyText"].clone("sm", fontSize=8, leading=10)
-    def tabla(data, widths=None):
-        t = Table(data, colWidths=widths, repeatRows=1)
-        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f6e56")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                               ("FONTSIZE", (0, 0), (-1, -1), 8), ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                               ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f6f4")]),
-                               ("VALIGN", (0, 0), (-1, -1), "TOP")]))
-        return t
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
-    f = [Paragraph(f"Informe de cadena de valor y flujo de caja: {empresa}", ss["Title"]), Paragraph(f"Fecha: {hoy}", ss["Normal"]),
-         Spacer(1, 8), Paragraph(f"Puntaje global de la cadena de valor: <b>{glob:.2f} / 5</b> ({nivel(glob)})", ss["Normal"]), Spacer(1, 8),
-         Paragraph("1. Puntaje por actividad primaria", ss["Heading2"]),
-         tabla([["Actividad", "Promedio (1-5)", "Nivel"]] + [[a, f"{v:.1f}", nivel(v)] for a, v in prom.items()], [250, 90, 100]),
-         Spacer(1, 8), Paragraph("2. Plan de acción priorizado (puntaje 3 o menos)", ss["Heading2"]),
-         tabla([["Actividad", "Criterio", "Pts", "Acción"]] + [[Paragraph(r.Actividad, sm), Paragraph(r.Criterio, sm), r.Puntaje, Paragraph(r.Acción, sm)]
-                                                               for r in plan_full.itertuples()], [90, 110, 25, 300]),
-         Spacer(1, 8), Paragraph("3. Flujo de caja proyectado a 12 meses (S/)", ss["Heading2"]),
-         Paragraph(f"Ingresos del año: S/ {tot['Total ingresos']:,.0f} | Egresos con impuesto: S/ {egr_total:,.0f} | "
-                   f"Flujo neto: S/ {tot['Flujo neto']:,.0f} | Margen neto: {margen:.1f}%", ss["Normal"]), Spacer(1, 6),
-         tabla([["Mes", "Ingresos", "Egresos oper.", "Impuesto", "Flujo neto", "Saldo de caja"]] +
-               [[r["Mes"], f"{r['Total ingresos']:,.0f}", f"{r['Egresos operativos']:,.0f}", f"{r['Impuesto a la renta (29.5%)']:,.0f}",
-                 f"{r['Flujo neto']:,.0f}", f"{r['Saldo de caja']:,.0f}"] for _, r in cf_tot.iterrows()]),
-         Spacer(1, 8), Paragraph("Egresos del año por actividad de la cadena de valor (S/)", ss["Heading2"]),
-         tabla([["Actividad", "Egreso anual"]] + [[a, f"{v:,.0f}"] for a, v in egr_act.items()], [250, 100]), Spacer(1, 10),
-         Paragraph("Nota: el flujo de caja es una proyección con supuestos referenciales editables, no cifras oficiales de la empresa. "
-                   "El puntaje se basa en el análisis del sitio web y en los ajustes del usuario.", sm)]
-    doc.build(f)
-    return buf.getvalue()
+try:
+    import openpyxl  # noqa: F401
+    xl = excel_bytes()
+except Exception:
+    xl = None
 
-
-d1, d2, d3 = st.columns(3)
-d1.download_button("📄 Informe completo (PDF)", pdf_bytes(), f"informe_{slug}.pdf", "application/pdf", width="stretch")
-d2.download_button("📊 Libro de Excel (4 hojas)", excel_bytes(), f"informe_{slug}.xlsx",
-                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
-d3.download_button("🧾 Flujo de caja (CSV)", cf_tot.to_csv(index=False).encode("utf-8-sig"), f"flujo_caja_{slug}.csv",
+d1, d2 = st.columns(2)
+if xl:
+    d1.download_button("📊 Libro de Excel (4 hojas)", xl, f"informe_{slug}.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
+else:
+    d1.info("Para descargar en Excel agrega la línea `openpyxl` en requirements.txt.")
+d2.download_button("🧾 Flujo de caja (CSV)", cf_tot.to_csv(index=False).encode("utf-8-sig"), f"flujo_caja_{slug}.csv",
                    "text/csv", width="stretch")
-st.caption("PDF: resumen para exponer · Excel: todo el detalle para editar · CSV: flujo de caja para otros programas.")
+st.caption("Excel: todo el detalle para editar · CSV: flujo de caja para otros programas.")
