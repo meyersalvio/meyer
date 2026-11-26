@@ -591,8 +591,6 @@ if egr_act and ajuste:
 st.dataframe(cf_tot.style.format({c: "{:,.0f}" for c in cf_tot.columns if c != "Mes"}), width="stretch", hide_index=True)
 
 # ---------- Informes descargables ----------
-st.divider()
-st.header("📥 Informes descargables")
 hoy = datetime.date.today().strftime("%d/%m/%Y")
 plan_full = df[df["Puntaje"] <= 3].sort_values("Puntaje")
 resumen = pd.DataFrame({"Concepto": ["Empresa", "Fecha", "Puntaje global (1-5)", "Ingresos del año (S/)", "Egresos del año con impuesto (S/)",
