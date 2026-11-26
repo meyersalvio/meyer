@@ -264,8 +264,7 @@ align-items:center;gap:20px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.06)}
 .inst .fac b{{color:#1b3a5c;font-size:14px}}
 @media(max-width:700px){{.inst .fac{{margin-left:0;text-align:left}}}}
 </style>
-<div class="inst"><img class="esc" src="{ESC_URI}" alt="UNHEVAL"><img class="car" src="{CAR_URI}" alt="Ingeniería Industrial">
-<div class="fac"><b>Facultad de Ingeniería Industrial y de Sistemas</b><br>Escuela Profesional de Ingeniería Industrial<br>Huánuco, Perú</div></div>
+<div class="inst"><img class="esc" src="{ESC_URI}" alt="UNHEVAL"><img class="car" src="{CAR_URI}" alt="Ingeniería Industrial"></div>
 """, unsafe_allow_html=True)
 st.markdown("<style>.hero{background:linear-gradient(120deg,#0f6e56,#1f77b4 55%,#9467bd);color:#fff;border-radius:16px;"
             "padding:20px 26px;margin-bottom:10px}.hero h1{color:#fff;margin:0;font-size:30px}.hero p{margin:4px 0 0;opacity:.92}</style>"
